@@ -96,6 +96,7 @@ jobs:
               "SND_USB_AUDIO":"m", "NET":"y", "PACKET":"y", "INET":"y",
               "USB":"y", "USB_DWC2":"y", "MMC":"y", "MMC_BLOCK":"m",
               "MMC_BCM2835":"y", "EXT4_FS":"y",
+              "BLK_DEV_INITRD":"y", "RD_GZIP":"y",
               "SND_IMX_SOC":"n", "SND_SOC_FSL_ESAI":"n",
               "SND_SOC_FSL_SAI":"n", "SND_SOC_FSL_SSI":"n"
           }
@@ -228,6 +229,18 @@ jobs:
           ) > "$OUT/boot/initramfs7"
           test -s "$OUT/boot/kernel7.img"
           test -s "$OUT/boot/initramfs7"
+          cat > "$OUT/boot/rpi2-config-example.txt" <<'BOOTCFG'
+          # Merge these lines into the existing Raspberry Pi boot config.txt
+          kernel=kernel7.img
+          initramfs initramfs7 followkernel
+          device_tree=bcm2709-rpi-2-b.dtb
+          arm_64bit=0
+          BOOTCFG
+          cat > "$OUT/boot/cmdline-example.txt" <<'CMDLINE'
+          # Add the correct root partition for the Eunhasu SD-card image.
+          # Example only; replace /dev/mmcblk0p2 if the root filesystem differs.
+          console=serial0,115200 console=tty1 root=/dev/mmcblk0p2 rootwait rw
+          CMDLINE
           test -s "$OUT/boot/bcm2709-rpi-2-b.dtb"
           test -s "$OUT/boot/bcm2836-rpi-2-b.dtb"
           test -s "$OUT/modules/lib/modules/$KREL/modules.dep"
