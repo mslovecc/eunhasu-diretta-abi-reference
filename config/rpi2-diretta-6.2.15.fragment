@@ -31,6 +31,9 @@ CONFIG_KERNEL_MODE_NEON=y
 
 CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y
+# The original A20 Diretta modules reference __gnu_mcount_nc.
+# ARM exports this symbol only when CONFIG_FUNCTION_TRACER is enabled.
+CONFIG_FUNCTION_TRACER=y
 # CONFIG_MODVERSIONS is not set
 
 # Match the original module release string when building the kernel.
