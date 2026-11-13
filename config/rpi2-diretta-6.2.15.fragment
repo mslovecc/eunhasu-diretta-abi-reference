@@ -143,6 +143,11 @@ CONFIG_DRM_V3D=m
 
 # ---------------------------------------------------------------------------
 # Non-target SoC audio machine drivers. USB audio remains enabled above.
+# multi_v7_defconfig enables this generic Freescale card, which selects
+# ESAI/SAI/SSI even on BCM2836. Disable the parent i.MX/FSL sound-card
+# support instead of fighting Kconfig's select rules on the leaf drivers.
+# CONFIG_SND_IMX_SOC is not set
+# CONFIG_SND_SOC_FSL_ASOC_CARD is not set
 # ---------------------------------------------------------------------------
 # CONFIG_SND_SUN4I_CODEC is not set
 # CONFIG_SND_SUN4I_I2S is not set
