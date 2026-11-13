@@ -198,23 +198,32 @@ jobs:
               "kernel/sound/core/",
               "kernel/sound/usb/",
               "kernel/sound/soc/bcm/",
-              "kernel/drivers/mmc/",
-              "kernel/drivers/net/usb/",
-              "kernel/drivers/clk/bcm/",
-              "kernel/drivers/pinctrl/bcm/",
               "kernel/drivers/firmware/raspberrypi/",
               "kernel/drivers/gpu/drm/vc4/",
               "kernel/drivers/gpu/drm/v3d/",
-              "kernel/drivers/i2c/busses/",
-              "kernel/drivers/spi/",
-              "kernel/drivers/watchdog/",
-              "kernel/drivers/char/hw_random/",
+          )
+          # Select BCM283x / Pi-specific platform modules by filename rather
+          # than retaining every generic I2C, SPI, MMC, or watchdog driver
+          # built by multi_v7_defconfig.
+          pi_tokens = (
+              "bcm2835", "bcm2836", "bcm2708", "bcm2709",
+              "pinctrl-bcm", "vc4", "v3d",
           )
           exact = {
+              "kernel/drivers/i2c/busses/i2c-bcm2835.ko",
+              "kernel/drivers/spi/spi-bcm2835.ko",
+              "kernel/drivers/char/hw_random/bcm2835-rng.ko",
+              "kernel/drivers/watchdog/bcm2835_wdt.ko",
               "kernel/sound/soc/soc-core.ko",
           }
-          selected = {n for n in all_modules if n.startswith(prefixes) or n in exact}
+          selected = {
+              n for n in all_modules
+              if n.startswith(prefixes)
+              or Path(n).name.removesuffix(".ko").startswith(pi_tokens)
+              or n in exact
+          }
           selected.update(required)
+          selected.update(n for n in exact if n in all_modules)
 
           ordered, seen = [], set()
           def visit(name):
