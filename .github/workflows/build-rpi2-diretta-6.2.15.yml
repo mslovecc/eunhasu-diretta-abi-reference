@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y \
             bc bison flex make gcc-12-arm-linux-gnueabihf \
             binutils-arm-linux-gnueabihf libssl-dev libelf-dev \
-            dwarves python3 rsync cpio gzip dpkg-dev kmod
+            dwarves python3 rsync cpio gzip dpkg-dev kmod busybox-static:amd64
           # Kconfig probes the unversioned CROSS_COMPILE gcc name.
           # Ubuntu provides the pinned GCC 12 binary with a -12 suffix.
           sudo ln -sf "$(command -v arm-linux-gnueabihf-gcc-12)" /usr/local/bin/arm-linux-gnueabihf-gcc
@@ -264,12 +264,20 @@ jobs:
           # and its complete dependency chain and load it before root discovery.
           INITRD="$RUNNER_TEMP/initramfs"
           mkdir -p "$INITRD"/{bin,dev,proc,sys,newroot}
-          BUSYBOX="$BUSYBOX_ROOT/bin/busybox"
-          [[ -x "$BUSYBOX" ]] || BUSYBOX="$BUSYBOX_ROOT/usr/bin/busybox"
-          install -m 0755 "$BUSYBOX" "$INITRD/bin/busybox"
+          # The ARMHF BusyBox is a target executable and must never be run
+          # directly on this x86_64 GitHub runner. Use the native amd64 build
+          # to validate the applet set, then copy the ARMHF static binary into
+          # the target initramfs.
+          BUSYBOX_HOST="$(command -v busybox)"
+          BUSYBOX_ARM="$BUSYBOX_ROOT/bin/busybox"
+          [[ -x "$BUSYBOX_ARM" ]] || BUSYBOX_ARM="$BUSYBOX_ROOT/usr/bin/busybox"
+          test -x "$BUSYBOX_HOST"
+          test -s "$BUSYBOX_ARM"
+          readelf -h "$BUSYBOX_ARM" | grep -q 'Machine:.*ARM'
+          install -m 0755 "$BUSYBOX_ARM" "$INITRD/bin/busybox"
           for applet in sh mount mkdir sleep cat switch_root insmod mknod; do
-            if ! "$BUSYBOX" --list | grep -qx "$applet"; then
-              echo "Required BusyBox applet unavailable: $applet" >&2
+            if ! "$BUSYBOX_HOST" --list | grep -qx "$applet"; then
+              echo "Required BusyBox applet unavailable in host validation build: $applet" >&2
               exit 1
             fi
             ln -s busybox "$INITRD/bin/$applet"
