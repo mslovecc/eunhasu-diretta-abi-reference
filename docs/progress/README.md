@@ -32,3 +32,4 @@
 | 2026-11-13 | [修复 ARMHF BusyBox 在 x86_64 Runner 上被直接执行](2026-11-13-010-fix-armhf-busybox-host-execution.md) | 内核与模块构建通过；initramfs 阶段因宿主机执行 ARMHF BusyBox 失败；workflow 已修复，等待复测 |
 | 2026-11-13 | [定位 initramfs 阶段的未标记退出](2026-11-13-011-initramfs-failure-diagnostics.md) | 本次内核构建通过；initramfs 后段退出原因尚未显露；已加入 ERR trap 与阶段标记，等待复测 |
 | 2026-11-13 | [修复 initramfs CPIO 清单路径格式校验](2026-11-13-012-fix-initramfs-cpio-list-validation.md) | 已修复清单路径规范化；等待新的 Actions run 验证 |
+| 2026-11-13 | [修复 Diretta ABI 所需的 ARM `__gnu_mcount_nc` 导出](2026-11-13-013-fix-gnu-mcount-export.md) | 已启用 FUNCTION_TRACER 并加入配置校验；等待新的 Actions 验证 |
