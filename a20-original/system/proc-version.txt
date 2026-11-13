@@ -1,0 +1,1 @@
+Linux version 6.2.15-215.fc36.armv7hl (root@eunhasu) (gcc (GCC) 12.2.1 20221121 (Red Hat 12.2.1-4), GNU ld version 2.37-37.fc36) #1 SMP PREEMPT Thu Dec 12 22:17:03 PST 2024

@@ -1,0 +1,2 @@
+pcilib: Cannot open /proc/bus/pci
+lspci: Cannot find any working access method.

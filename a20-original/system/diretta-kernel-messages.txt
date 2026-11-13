@@ -1,0 +1,14 @@
+[    5.883163] systemd[1]: systemd-modules-load.service - Load Kernel Modules was skipped because all trigger condition checks failed.
+[   17.188126] systemd[1]: Configuration file /usr/lib/systemd/system/diretta_target.service is marked world-writable. Please remove world writability permission bits. Proceeding anyway.
+[   17.258942] systemd[1]: Configuration file /usr/lib/systemd/system/diretta_sink.service is marked world-writable. Please remove world writability permission bits. Proceeding anyway.
+[   17.283481] systemd[1]: Configuration file /usr/lib/systemd/system/diretta_host.service is marked world-writable. Please remove world writability permission bits. Proceeding anyway.
+[   17.307565] systemd[1]: Configuration file /usr/lib/systemd/system/diretta_driver.service is marked world-writable. Please remove world writability permission bits. Proceeding anyway.
+[   18.998055] systemd[1]: Starting modprobe@configfs.service - Load Kernel Module configfs...
+[   19.037252] systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+[   19.065423] systemd[1]: Starting modprobe@fuse.service - Load Kernel Module fuse...
+[   19.217541] systemd[1]: systemd-modules-load.service - Load Kernel Modules was skipped because all trigger condition checks failed.
+[   19.496986] systemd[1]: Finished modprobe@configfs.service - Load Kernel Module configfs.
+[   19.533800] systemd[1]: Finished modprobe@drm.service - Load Kernel Module drm.
+[   23.171326] snd_usb_audio: loading out-of-tree module taints kernel.
+[   23.180227] snd_usb_audio: module verification failed: signature and/or required key missing - tainting kernel
+[   41.874856] diretta_alsa_init
