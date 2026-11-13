@@ -1,0 +1,181 @@
+name: Build RPi2 Diretta Linux 6.2.15 and audit module ABI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARCH: arm
+      CROSS_COMPILE: arm-linux-gnueabihf-
+      KERNEL_COMMIT: 3c6c5ba197a9daf02c77ae39d65677c5e63e0845
+    steps:
+      - name: Install ARM cross-build dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex make gcc-12-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf libssl-dev libelf-dev \
+            dwarves python3 rsync
+          arm-linux-gnueabihf-gcc-12 --version
+          make --version | head -n 1
+
+      - name: Checkout ABI reference and config
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned upstream Linux 6.2.15
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SRC="$RUNNER_TEMP/linux"
+          git init "$SRC"
+          git -C "$SRC" remote add origin https://github.com/torvalds/linux.git
+          git -C "$SRC" fetch --depth=1 origin "$KERNEL_COMMIT"
+          git -C "$SRC" checkout --detach FETCH_HEAD
+          test "$(make -s -C "$SRC" ARCH=arm kernelversion)" = "6.2.15"
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$KERNEL_COMMIT"
+          echo "SRC=$SRC" >> "$GITHUB_ENV"
+
+      - name: Resolve and verify kernel configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$SRC"
+          make ARCH=arm multi_v7_defconfig
+          bash scripts/kconfig/merge_config.sh -m -r .config \
+            "$GITHUB_WORKSPACE/config/rpi2-diretta-6.2.15.fragment"
+          make ARCH=arm olddefconfig
+          make ARCH=arm syncconfig
+          cp .config "$GITHUB_WORKSPACE/rpi2-diretta-6.2.15.resolved.config"
+
+          python3 - "$GITHUB_WORKSPACE/config/rpi2-diretta-6.2.15.fragment" .config <<'PY'
+          import re, sys
+          from pathlib import Path
+          def parse(path):
+              result = {}
+              for raw in Path(path).read_text().splitlines():
+                  line = raw.strip()
+                  m = re.fullmatch(r"CONFIG_([A-Z0-9_]+)=(.*)", line)
+                  if m:
+                      result[m.group(1)] = m.group(2)
+                      continue
+                  m = re.fullmatch(r"# CONFIG_([A-Z0-9_]+) is not set", line)
+                  if m:
+                      result[m.group(1)] = "n"
+              return result
+          requested, final = parse(sys.argv[1]), parse(sys.argv[2])
+          mismatches = [(k,v,final.get(k,"<absent>")) for k,v in requested.items()
+                        if final.get(k,"n" if v=="n" else "<absent>") != v]
+          required = {
+              "ARCH_MULTI_V7":"y", "ARCH_BCM2835":"y", "CPU_V7":"y",
+              "AEABI":"y", "SMP":"y", "PREEMPT":"y", "NEON":"y",
+              "KERNEL_MODE_NEON":"y", "MODULES":"y", "MODULE_UNLOAD":"y",
+              "MODVERSIONS":"n", "SND":"m", "SND_PCM":"m",
+              "SND_USB_AUDIO":"m", "NET":"y", "PACKET":"y", "INET":"y",
+              "USB":"y", "USB_DWC2":"y", "MMC":"y", "MMC_BLOCK":"m",
+              "MMC_BCM2835":"y", "EXT4_FS":"y",
+              "SND_IMX_SOC":"n", "SND_SOC_FSL_ESAI":"n",
+              "SND_SOC_FSL_SAI":"n", "SND_SOC_FSL_SSI":"n"
+          }
+          failed = [(k,v,final.get(k,"<absent>")) for k,v in required.items()
+                    if final.get(k,"<absent>") != v]
+          print(f"Fragment options={len(requested)}; resolved options={len(final)}")
+          print(f"Config mismatches={len(mismatches)}; required failures={len(failed)}")
+          for item in mismatches + failed:
+              print("CONFIG_%s expected=%s actual=%s" % item)
+          if mismatches or failed:
+              raise SystemExit("CONFIG VALIDATION FAILED")
+          print("CONFIG VALIDATION PASSED")
+          PY
+
+      - name: Build zImage, modules and device trees
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$SRC"
+          export ARCH CROSS_COMPILE
+          export KCFLAGS=""
+          echo "Cross compiler:"
+          arm-linux-gnueabihf-gcc-12 --version | head -n 1
+          make -j2 ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
+            CC=arm-linux-gnueabihf-gcc-12 zImage modules dtbs
+          KREL="$(make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
+            CC=arm-linux-gnueabihf-gcc-12 kernelrelease)"
+          echo "KERNELRELEASE=$KREL" | tee "$GITHUB_WORKSPACE/kernelrelease.txt"
+          test "$KREL" = "6.2.15-215.fc36.armv7hl"
+          test -s arch/arm/boot/zImage
+          test -s arch/arm/boot/dts/broadcom/bcm2836-rpi-2-b.dtb
+          test -s Module.symvers
+          mkdir -p "$GITHUB_WORKSPACE/out/boot"
+          mkdir -p "$GITHUB_WORKSPACE/out/modules"
+          cp arch/arm/boot/zImage "$GITHUB_WORKSPACE/out/boot/"
+          cp arch/arm/boot/dts/broadcom/bcm2836-rpi-2-b.dtb "$GITHUB_WORKSPACE/out/boot/"
+          cp System.map Module.symvers .config "$GITHUB_WORKSPACE/out/"
+          make ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
+            CC=arm-linux-gnueabihf-gcc-12 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/out/modules" \
+            modules_install
+          depmod -b "$GITHUB_WORKSPACE/out/modules" "$KREL" || true
+          du -sh "$GITHUB_WORKSPACE/out"
+
+      - name: Audit all original Diretta undefined symbols
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - "$GITHUB_WORKSPACE" "$SRC/Module.symvers" <<'PY'
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          symvers = Path(sys.argv[2])
+          exported = set()
+          for line in symvers.read_text(errors="replace").splitlines():
+              fields = line.split()
+              if len(fields) >= 2:
+                  exported.add(fields[1])
+          files = [
+              root / "a20-original/diretta/alsa_bridge.undefined-symbols.txt",
+              root / "a20-original/diretta/diretta_direct.undefined-symbols.txt",
+          ]
+          all_symbols = set()
+          for file in files:
+              symbols = {line.split()[-1] for line in file.read_text().splitlines()
+                         if line.split() and line.split()[0] == "U"}
+              print(f"{file.name}: {len(symbols)} undefined symbols")
+              all_symbols.update(symbols)
+          missing = sorted(all_symbols - exported)
+          present = sorted(all_symbols & exported)
+          report = [
+              f"Original unique undefined symbols: {len(all_symbols)}",
+              f"Exported by target kernel: {len(present)}",
+              f"Not exported by target kernel: {len(missing)}",
+              "",
+              "[NOT EXPORTED]",
+              *missing,
+              "",
+              "[EXPORTED]",
+              *present,
+          ]
+          (root / "diretta-symbol-audit.txt").write_text("\n".join(report) + "\n")
+          print("\n".join(report))
+          print("SYMBOL AUDIT COMPLETE (missing exports are reported, not treated as build failure)")
+          PY
+          cp "$GITHUB_WORKSPACE/diretta-symbol-audit.txt" "$GITHUB_WORKSPACE/out/"
+
+      - name: Upload kernel build and ABI audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpi2-diretta-linux-6.2.15-build
+          path: |
+            out/
+            kernelrelease.txt
+            diretta-symbol-audit.txt
+            rpi2-diretta-6.2.15.resolved.config
+          if-no-files-found: warn
+          compression-level: 6
