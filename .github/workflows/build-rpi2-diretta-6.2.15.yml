@@ -440,11 +440,13 @@ jobs:
           gzip -t "$OUT/boot/initramfs7"
           echo "INITRAMFS_GZIP_VALIDATED"
           INITRD_LIST="$RUNNER_TEMP/initramfs-list.txt"
-          gzip -dc "$OUT/boot/initramfs7" | cpio -it 2>/dev/null | sort > "$INITRD_LIST"
-          grep -Fxq "./init" "$INITRD_LIST"
-          grep -Fxq "./load-mmc-modules.sh" "$INITRD_LIST"
-          grep -Fxq "./bin/busybox" "$INITRD_LIST"
-          grep -Fxq "./lib/modules/$KREL/kernel/drivers/mmc/core/mmc_block.ko" "$INITRD_LIST"
+          # GNU cpio may print archive names with or without the leading "./".
+          # Normalize the listing before validating exact archive paths.
+          gzip -dc "$OUT/boot/initramfs7" | cpio -it 2>/dev/null | sed 's#^\./##' | sort > "$INITRD_LIST"
+          grep -Fxq "init" "$INITRD_LIST"
+          grep -Fxq "load-mmc-modules.sh" "$INITRD_LIST"
+          grep -Fxq "bin/busybox" "$INITRD_LIST"
+          grep -Fxq "lib/modules/$KREL/kernel/drivers/mmc/core/mmc_block.ko" "$INITRD_LIST"
           grep -Fq "PARTUUID=" "$INITRD/init"
           echo "Initramfs content validation passed:"
           cat "$INITRD_LIST"
