@@ -24,3 +24,4 @@
 | 2026-11-13 | [项目目标、资料基线与当前进度复述](2026-11-13-002-goal-and-current-status.md) | 配置验证通过；内核构建进行中（当时状态） |
 | 2026-11-13 | [首次完整内核构建成功与 Diretta 符号审计](2026-11-13-003-build-success-symbol-audit.md) | 内核构建通过；57/58 符号已导出；1 项待核实 |
 | 2026-11-13 | [RPi 2B 专用产物与 initramfs 启动修复（下一版）](2026-11-13-004-rpi2-initramfs-payload-fix.md) | workflow 已修改；等待 Actions 构建与实机验证 |
+| 2026-11-13 | [进一步收紧 RPi 2B 模块白名单](2026-11-13-005-rpi2-module-whitelist-tightening.md) | 模块白名单已收紧；等待 Actions 构建验证 |
