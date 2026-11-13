@@ -32,6 +32,22 @@ jobs:
           make --version | head -n 1
           # Install a statically linked ARMHF BusyBox for a real initramfs.
           sudo dpkg --add-architecture armhf
+
+          # Ubuntu 24.04 publishes armhf packages on ports.ubuntu.com,
+          # not security.ubuntu.com. Keep the runner's native amd64 sources
+          # restricted to amd64, then add the official ports archive for armhf.
+          if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+            sudo sed -i '/^Architectures:/d; /^URIs:/a Architectures: amd64' \
+              /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          sudo tee /etc/apt/sources.list.d/ubuntu-armhf.sources >/dev/null <<'APT'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-backports noble-security
+          Components: main universe
+          Architectures: armhf
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          APT
           sudo apt-get update
           mkdir -p "$RUNNER_TEMP/busybox-armhf"
           cd "$RUNNER_TEMP/busybox-armhf"
