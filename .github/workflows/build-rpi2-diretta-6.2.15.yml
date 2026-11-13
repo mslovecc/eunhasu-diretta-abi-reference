@@ -24,6 +24,10 @@ jobs:
             bc bison flex make gcc-12-arm-linux-gnueabihf \
             binutils-arm-linux-gnueabihf libssl-dev libelf-dev \
             dwarves python3 rsync
+          # Kconfig probes the unversioned CROSS_COMPILE gcc name.
+          # Ubuntu provides the pinned GCC 12 binary with a -12 suffix.
+          sudo ln -sf "$(command -v arm-linux-gnueabihf-gcc-12)" /usr/local/bin/arm-linux-gnueabihf-gcc
+          arm-linux-gnueabihf-gcc --version
           arm-linux-gnueabihf-gcc-12 --version
           make --version | head -n 1
 
