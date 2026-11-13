@@ -25,3 +25,4 @@
 | 2026-11-13 | [首次完整内核构建成功与 Diretta 符号审计](2026-11-13-003-build-success-symbol-audit.md) | 内核构建通过；57/58 符号已导出；1 项待核实 |
 | 2026-11-13 | [RPi 2B 专用产物与 initramfs 启动修复（下一版）](2026-11-13-004-rpi2-initramfs-payload-fix.md) | workflow 已修改；等待 Actions 构建与实机验证 |
 | 2026-11-13 | [进一步收紧 RPi 2B 模块白名单](2026-11-13-005-rpi2-module-whitelist-tightening.md) | 模块白名单已收紧；等待 Actions 构建验证 |
+| 2026-11-13 | [修复新版 workflow 的 YAML 缩进错误](2026-11-13-006-fix-workflow-yaml-indentation.md) | 已修复并静态复核；等待 GitHub Actions 加载验证 |
