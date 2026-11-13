@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y \
             bc bison flex make gcc-12-arm-linux-gnueabihf \
             binutils-arm-linux-gnueabihf libssl-dev libelf-dev \
-            dwarves python3 rsync cpio gzip dpkg-dev
+            dwarves python3 rsync cpio gzip dpkg-dev kmod
           # Kconfig probes the unversioned CROSS_COMPILE gcc name.
           # Ubuntu provides the pinned GCC 12 binary with a -12 suffix.
           sudo ln -sf "$(command -v arm-linux-gnueabihf-gcc-12)" /usr/local/bin/arm-linux-gnueabihf-gcc
@@ -217,6 +217,7 @@ jobs:
             echo "initramfs: cannot mount root or /sbin/init is missing"
             exec sh
           fi
+          mkdir -p /newroot/dev /newroot/proc /newroot/sys
           mount -o move /dev /newroot/dev
           mount -o move /proc /newroot/proc
           mount -o move /sys /newroot/sys
