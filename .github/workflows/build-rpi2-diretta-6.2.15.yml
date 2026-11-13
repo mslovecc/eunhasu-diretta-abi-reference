@@ -168,6 +168,10 @@ jobs:
             INSTALL_MOD_PATH="$OUT/modules" modules_install
           MODROOT="$OUT/modules/lib/modules/$KREL"
           test -d "$MODROOT"
+          # modules_install creates links back to the source/build trees.
+          # Remove them immediately, before any later validation can fail,
+          # so a failed job cannot leave oversized trees for artifact upload.
+          rm -f "$MODROOT/build" "$MODROOT/source"
           depmod -b "$OUT/modules" "$KREL"
 
           # Select Raspberry Pi platform support plus the audio and USB
@@ -186,7 +190,7 @@ jobs:
 
           all_modules = {p.relative_to(root).as_posix() for p in root.rglob("*.ko")}
           required = {
-              "kernel/drivers/mmc/card/mmc_block.ko",
+              "kernel/drivers/mmc/core/mmc_block.ko",
               "kernel/sound/usb/snd-usb-audio.ko",
               "kernel/drivers/net/usb/smsc95xx.ko",
           }
@@ -248,10 +252,9 @@ jobs:
           print(f"Unrelated modules removed: {len(removed)}")
           PYMOD
 
-          # Rebuild indexes after pruning. Remove source-tree symlinks which
-          # otherwise cause upload-artifact to archive the entire kernel tree.
+          # Rebuild indexes after pruning. Source-tree symlinks were removed
+          # immediately after modules_install above.
           depmod -b "$OUT/modules" "$KREL"
-          rm -f "$MODROOT/build" "$MODROOT/source"
           MOD_COUNT="$(find "$MODROOT" -type f -name '*.ko' | wc -l)"
           echo "Packaged RPi2/audio modules: $MOD_COUNT"
           test "$MOD_COUNT" -gt 0
@@ -277,7 +280,7 @@ jobs:
           from pathlib import Path
 
           modroot, initrd, krel = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-          target = "kernel/drivers/mmc/card/mmc_block.ko"
+          target = "kernel/drivers/mmc/core/mmc_block.ko"
           deps = {}
           for raw in (modroot / "modules.dep").read_text().splitlines():
               if ":" in raw:
@@ -428,7 +431,7 @@ jobs:
           grep -Fxq "./init" "$INITRD_LIST"
           grep -Fxq "./load-mmc-modules.sh" "$INITRD_LIST"
           grep -Fxq "./bin/busybox" "$INITRD_LIST"
-          grep -Fxq "./lib/modules/$KREL/kernel/drivers/mmc/card/mmc_block.ko" "$INITRD_LIST"
+          grep -Fxq "./lib/modules/$KREL/kernel/drivers/mmc/core/mmc_block.ko" "$INITRD_LIST"
           grep -Fq "PARTUUID=" "$INITRD/init"
           echo "Initramfs content validation passed:"
           cat "$INITRD_LIST"
@@ -497,7 +500,8 @@ jobs:
           cp "$GITHUB_WORKSPACE/diretta-symbol-audit.txt" "$GITHUB_WORKSPACE/out/"
 
       - name: Upload kernel build and ABI audit artifacts
-        if: always()
+        # Never publish partial outputs or diagnostics from a failed build.
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: rpi2-diretta-linux-6.2.15-build
