@@ -30,3 +30,4 @@
 | 2026-11-13 | [定位 MMC 模块路径检查错误与异常膨胀的构建产物](2026-11-13-008-fix-mmc-module-path-diagnosis.md) | 内核与模块已编译；模块路径检查失败；initramfs 与 Diretta 审计未完成 |
 | 2026-11-13 | [修正 MMC 模块路径并禁止失败构建上传产物](2026-11-13-009-mmc-path-and-success-only-artifacts.md) | Workflow 已提交；等待新的 Actions 构建验证 |
 | 2026-11-13 | [修复 ARMHF BusyBox 在 x86_64 Runner 上被直接执行](2026-11-13-010-fix-armhf-busybox-host-execution.md) | 内核与模块构建通过；initramfs 阶段因宿主机执行 ARMHF BusyBox 失败；workflow 已修复，等待复测 |
+| 2026-11-13 | [定位 initramfs 阶段的未标记退出](2026-11-13-011-initramfs-failure-diagnostics.md) | 本次内核构建通过；initramfs 后段退出原因尚未显露；已加入 ERR trap 与阶段标记，等待复测 |
