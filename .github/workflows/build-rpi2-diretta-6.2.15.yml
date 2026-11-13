@@ -108,6 +108,7 @@ jobs:
               "ARCH_MULTI_V7":"y", "ARCH_BCM2835":"y", "CPU_V7":"y",
               "AEABI":"y", "SMP":"y", "PREEMPT":"y", "NEON":"y",
               "KERNEL_MODE_NEON":"y", "MODULES":"y", "MODULE_UNLOAD":"y",
+              "FUNCTION_TRACER":"y",
               "MODVERSIONS":"n", "SND":"m", "SND_PCM":"m",
               "SND_USB_AUDIO":"m", "NET":"y", "PACKET":"y", "INET":"y",
               "USB":"y", "USB_DWC2":"y", "MMC":"y", "MMC_BLOCK":"m",
