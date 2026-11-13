@@ -142,7 +142,7 @@ jobs:
           # board DTB in the multi_v7 tree.
           make -j2 ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 zImage modules \
-            arch/arm/boot/dts/bcm2836-rpi-2-b.dtb
+            bcm2836-rpi-2-b.dtb
 
           KREL="$(make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 kernelrelease)"
