@@ -23,13 +23,24 @@ jobs:
           sudo apt-get install -y \
             bc bison flex make gcc-12-arm-linux-gnueabihf \
             binutils-arm-linux-gnueabihf libssl-dev libelf-dev \
-            dwarves python3 rsync
+            dwarves python3 rsync cpio gzip dpkg-dev
           # Kconfig probes the unversioned CROSS_COMPILE gcc name.
           # Ubuntu provides the pinned GCC 12 binary with a -12 suffix.
           sudo ln -sf "$(command -v arm-linux-gnueabihf-gcc-12)" /usr/local/bin/arm-linux-gnueabihf-gcc
           arm-linux-gnueabihf-gcc --version
           arm-linux-gnueabihf-gcc-12 --version
           make --version | head -n 1
+          # Install a statically linked ARMHF BusyBox for a real initramfs.
+          sudo dpkg --add-architecture armhf
+          sudo apt-get update
+          mkdir -p "$RUNNER_TEMP/busybox-armhf"
+          cd "$RUNNER_TEMP/busybox-armhf"
+          apt-get download busybox-static:armhf
+          DEB="$(find . -maxdepth 1 -name 'busybox-static_*_armhf.deb' -print -quit)"
+          test -n "$DEB"
+          dpkg-deb -x "$DEB" extracted
+          test -s extracted/bin/busybox || test -s extracted/usr/bin/busybox
+          echo "BUSYBOX_ROOT=$RUNNER_TEMP/busybox-armhf/extracted" >> "$GITHUB_ENV"
 
       - name: Checkout ABI reference and config
         uses: actions/checkout@v4
@@ -108,25 +119,122 @@ jobs:
           export KCFLAGS=""
           echo "Cross compiler:"
           arm-linux-gnueabihf-gcc-12 --version | head -n 1
+
+          # The kernel tree is intentionally modified by .config generation.
+          # An empty .scmversion prevents git's dirty-tree '+' suffix from
+          # changing the ABI release string.
+          : > .scmversion
+
           make -j2 ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 zImage modules dtbs
+
           KREL="$(make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 kernelrelease)"
           echo "KERNELRELEASE=$KREL" | tee "$GITHUB_WORKSPACE/kernelrelease.txt"
-          test "$KREL" = "6.2.15-215.fc36.armv7hl"
+          if [[ "$KREL" != "6.2.15-215.fc36.armv7hl" ]]; then
+            echo "Unexpected kernel release: '$KREL'" >&2
+            exit 1
+          fi
+
           test -s arch/arm/boot/zImage
           test -s arch/arm/boot/dts/bcm2836-rpi-2-b.dtb
           test -s Module.symvers
-          mkdir -p "$GITHUB_WORKSPACE/out/boot"
-          mkdir -p "$GITHUB_WORKSPACE/out/modules"
-          cp arch/arm/boot/zImage "$GITHUB_WORKSPACE/out/boot/"
-          cp arch/arm/boot/dts/bcm2836-rpi-2-b.dtb "$GITHUB_WORKSPACE/out/boot/"
-          cp System.map Module.symvers .config "$GITHUB_WORKSPACE/out/"
+          test -s System.map
+
+          OUT="$GITHUB_WORKSPACE/out"
+          mkdir -p "$OUT/boot" "$OUT/modules"
+          install -m 0644 arch/arm/boot/zImage "$OUT/boot/kernel7.img"
+          # Keep the upstream DTB name and provide the conventional Pi 2 name.
+          cp arch/arm/boot/dts/*.dtb "$OUT/boot/"
+          install -m 0644 arch/arm/boot/dts/bcm2836-rpi-2-b.dtb \
+            "$OUT/boot/bcm2709-rpi-2-b.dtb"
+          if [[ -d arch/arm/boot/dts/overlays ]]; then
+            mkdir -p "$OUT/boot/overlays"
+            cp arch/arm/boot/dts/overlays/*.dtbo "$OUT/boot/overlays/" 2>/dev/null || true
+          fi
+
+          cp System.map Module.symvers .config "$OUT/"
           make ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
-            CC=arm-linux-gnueabihf-gcc-12 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/out/modules" \
-            modules_install
-          depmod -b "$GITHUB_WORKSPACE/out/modules" "$KREL" || true
-          du -sh "$GITHUB_WORKSPACE/out"
+            CC=arm-linux-gnueabihf-gcc-12 \
+            INSTALL_MOD_PATH="$OUT/modules" modules_install
+          test -d "$OUT/modules/lib/modules/$KREL"
+          depmod -b "$OUT/modules" "$KREL"
+          MOD_COUNT="$(find "$OUT/modules/lib/modules/$KREL" -type f -name '*.ko' | wc -l)"
+          echo "Installed kernel modules: $MOD_COUNT"
+          test "$MOD_COUNT" -gt 0
+
+          # Build a valid ARMHF initramfs. It expects root=/dev/... in cmdline.txt,
+          # waits for the root block device, mounts it, then switches to /sbin/init.
+          INITRD="$RUNNER_TEMP/initramfs"
+          mkdir -p "$INITRD"/{bin,dev,proc,sys,newroot}
+          BUSYBOX="$BUSYBOX_ROOT/bin/busybox"
+          [[ -x "$BUSYBOX" ]] || BUSYBOX="$BUSYBOX_ROOT/usr/bin/busybox"
+          install -m 0755 "$BUSYBOX" "$INITRD/bin/busybox"
+          for applet in sh mount mkdir sleep cat switch_root; do
+            ln -s busybox "$INITRD/bin/$applet"
+          done
+          cat > "$INITRD/init" <<'INIT'
+          #!/bin/sh
+          export PATH=/bin
+          mount -t devtmpfs devtmpfs /dev
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          ROOT=""
+          ROOTFSTYPE=""
+          for arg in $(cat /proc/cmdline); do
+            case "$arg" in
+              root=*) ROOT="${arg#root=}" ;;
+              rootfstype=*) ROOTFSTYPE="${arg#rootfstype=}" ;;
+            esac
+          done
+          if [ -z "$ROOT" ]; then
+            echo "initramfs: missing root= in kernel command line"
+            exec sh
+          fi
+          case "$ROOT" in
+            /dev/*) ;;
+            *)
+              echo "initramfs: root must be a /dev/... path, got: $ROOT"
+              exec sh
+              ;;
+          esac
+          n=0
+          while [ ! -b "$ROOT" ] && [ "$n" -lt 30 ]; do
+            sleep 1
+            n=$((n + 1))
+          done
+          if [ ! -b "$ROOT" ]; then
+            echo "initramfs: root device not found: $ROOT"
+            exec sh
+          fi
+          if [ -n "$ROOTFSTYPE" ]; then
+            mount -t "$ROOTFSTYPE" -o rw "$ROOT" /newroot
+          else
+            mount -o rw "$ROOT" /newroot
+          fi
+          if [ $? -ne 0 ] || [ ! -x /newroot/sbin/init ]; then
+            echo "initramfs: cannot mount root or /sbin/init is missing"
+            exec sh
+          fi
+          mount -o move /dev /newroot/dev
+          mount -o move /proc /newroot/proc
+          mount -o move /sys /newroot/sys
+          exec switch_root /newroot /sbin/init
+          INIT
+          chmod 0755 "$INITRD/init"
+          (
+            cd "$INITRD"
+            find . -print0 | cpio --null -o --format=newc 2>/dev/null | gzip -9
+          ) > "$OUT/boot/initramfs7"
+          test -s "$OUT/boot/kernel7.img"
+          test -s "$OUT/boot/initramfs7"
+          test -s "$OUT/boot/bcm2709-rpi-2-b.dtb"
+          test -s "$OUT/boot/bcm2836-rpi-2-b.dtb"
+          test -s "$OUT/modules/lib/modules/$KREL/modules.dep"
+          echo "Final boot and module payload:"
+          find "$OUT/boot" -maxdepth 2 -type f -printf '%P %s bytes\\n' | sort
+          echo "Module files: $MOD_COUNT"
+          du -sh "$OUT"
 
       - name: Audit all original Diretta undefined symbols
         shell: bash
@@ -181,5 +289,5 @@ jobs:
             kernelrelease.txt
             diretta-symbol-audit.txt
             rpi2-diretta-6.2.15.resolved.config
-          if-no-files-found: warn
+          if-no-files-found: error
           compression-level: 6
