@@ -413,6 +413,16 @@ jobs:
           ) > "$OUT/boot/initramfs7"
           test -s "$OUT/boot/kernel7.img"
           test -s "$OUT/boot/initramfs7"
+          gzip -t "$OUT/boot/initramfs7"
+          INITRD_LIST="$RUNNER_TEMP/initramfs-list.txt"
+          gzip -dc "$OUT/boot/initramfs7" | cpio -it 2>/dev/null | sort > "$INITRD_LIST"
+          grep -Fxq "./init" "$INITRD_LIST"
+          grep -Fxq "./load-mmc-modules.sh" "$INITRD_LIST"
+          grep -Fxq "./bin/busybox" "$INITRD_LIST"
+          grep -Fxq "./lib/modules/$KREL/kernel/drivers/mmc/card/mmc_block.ko" "$INITRD_LIST"
+          grep -Fq "PARTUUID=" "$INITRD/init"
+          echo "Initramfs content validation passed:"
+          cat "$INITRD_LIST"
 
           cat > "$OUT/boot/rpi2-config-example.txt" <<'BOOTCFG'
           # Merge these lines into the existing Raspberry Pi boot config.txt
