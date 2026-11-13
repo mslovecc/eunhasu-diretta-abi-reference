@@ -28,3 +28,4 @@
 | 2026-11-13 | [修复新版 workflow 的 YAML 缩进错误](2026-11-13-006-fix-workflow-yaml-indentation.md) | 已修复并静态复核；等待 GitHub Actions 加载验证 |
 | 2026-11-13 | [修复 RPi 2B DTB 单目标构建路径重复](2026-11-13-007-fix-dtb-make-target.md) | workflow 已修复；等待 Actions 构建验证 |
 | 2026-11-13 | [定位 MMC 模块路径检查错误与异常膨胀的构建产物](2026-11-13-008-fix-mmc-module-path-diagnosis.md) | 内核与模块已编译；模块路径检查失败；initramfs 与 Diretta 审计未完成 |
+| 2026-11-13 | [修正 MMC 模块路径并禁止失败构建上传产物](2026-11-13-009-mmc-path-and-success-only-artifacts.md) | Workflow 已提交；等待新的 Actions 构建验证 |
