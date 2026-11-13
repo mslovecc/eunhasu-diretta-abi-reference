@@ -127,7 +127,7 @@ jobs:
           print("CONFIG VALIDATION PASSED")
           PY
 
-      - name: Build zImage, modules and device trees
+      - name: Build RPi2 kernel, selected modules, DTB and bootable initramfs
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -136,23 +136,18 @@ jobs:
           export KCFLAGS=""
           echo "Cross compiler:"
           arm-linux-gnueabihf-gcc-12 --version | head -n 1
-
-          # The kernel tree is intentionally modified by .config generation.
-          # An empty .scmversion prevents git's dirty-tree '+' suffix from
-          # changing the ABI release string.
           : > .scmversion
 
+          # Build only the Raspberry Pi 2 Model B device tree, not every
+          # board DTB in the multi_v7 tree.
           make -j2 ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
-            CC=arm-linux-gnueabihf-gcc-12 zImage modules dtbs
+            CC=arm-linux-gnueabihf-gcc-12 zImage modules \
+            arch/arm/boot/dts/bcm2836-rpi-2-b.dtb
 
           KREL="$(make -s ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 kernelrelease)"
           echo "KERNELRELEASE=$KREL" | tee "$GITHUB_WORKSPACE/kernelrelease.txt"
-          if [[ "$KREL" != "6.2.15-215.fc36.armv7hl" ]]; then
-            echo "Unexpected kernel release: '$KREL'" >&2
-            exit 1
-          fi
-
+          [[ "$KREL" == "6.2.15-215.fc36.armv7hl" ]]
           test -s arch/arm/boot/zImage
           test -s arch/arm/boot/dts/bcm2836-rpi-2-b.dtb
           test -s Module.symvers
@@ -161,82 +156,254 @@ jobs:
           OUT="$GITHUB_WORKSPACE/out"
           mkdir -p "$OUT/boot" "$OUT/modules"
           install -m 0644 arch/arm/boot/zImage "$OUT/boot/kernel7.img"
-          # Keep the upstream DTB name and provide the conventional Pi 2 name.
-          cp arch/arm/boot/dts/*.dtb "$OUT/boot/"
+          install -m 0644 arch/arm/boot/dts/bcm2836-rpi-2-b.dtb \
+            "$OUT/boot/bcm2836-rpi-2-b.dtb"
+          # Keep the legacy filename used by the previous boot config too.
           install -m 0644 arch/arm/boot/dts/bcm2836-rpi-2-b.dtb \
             "$OUT/boot/bcm2709-rpi-2-b.dtb"
-          if [[ -d arch/arm/boot/dts/overlays ]]; then
-            mkdir -p "$OUT/boot/overlays"
-            cp arch/arm/boot/dts/overlays/*.dtbo "$OUT/boot/overlays/" 2>/dev/null || true
-          fi
-
           cp System.map Module.symvers .config "$OUT/"
+
           make ARCH=arm CROSS_COMPILE="$CROSS_COMPILE" \
             CC=arm-linux-gnueabihf-gcc-12 \
             INSTALL_MOD_PATH="$OUT/modules" modules_install
-          test -d "$OUT/modules/lib/modules/$KREL"
+          MODROOT="$OUT/modules/lib/modules/$KREL"
+          test -d "$MODROOT"
           depmod -b "$OUT/modules" "$KREL"
-          MOD_COUNT="$(find "$OUT/modules/lib/modules/$KREL" -type f -name '*.ko' | wc -l)"
-          echo "Installed kernel modules: $MOD_COUNT"
+
+          # Select Raspberry Pi platform support plus the audio and USB
+          # networking stack needed by this audio appliance. Keep the complete
+          # recursive modules.dep dependency closure before deleting anything.
+          python3 - "$MODROOT" <<'PYMOD'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          deps = {}
+          for raw in (root / "modules.dep").read_text().splitlines():
+              if ":" in raw:
+                  name, values = raw.split(":", 1)
+                  deps[name.strip()] = values.split()
+
+          all_modules = {p.relative_to(root).as_posix() for p in root.rglob("*.ko")}
+          required = {
+              "kernel/drivers/mmc/card/mmc_block.ko",
+              "kernel/sound/usb/snd-usb-audio.ko",
+              "kernel/drivers/net/usb/smsc95xx.ko",
+          }
+          missing = sorted(required - all_modules)
+          if missing:
+              raise SystemExit("Required RPi2 boot/audio modules missing: " + ", ".join(missing))
+
+          prefixes = (
+              "kernel/sound/core/",
+              "kernel/sound/usb/",
+              "kernel/sound/soc/bcm/",
+              "kernel/drivers/mmc/",
+              "kernel/drivers/net/usb/",
+              "kernel/drivers/clk/bcm/",
+              "kernel/drivers/pinctrl/bcm/",
+              "kernel/drivers/firmware/raspberrypi/",
+              "kernel/drivers/gpu/drm/vc4/",
+              "kernel/drivers/gpu/drm/v3d/",
+              "kernel/drivers/i2c/busses/",
+              "kernel/drivers/spi/",
+              "kernel/drivers/watchdog/",
+              "kernel/drivers/char/hw_random/",
+          )
+          exact = {
+              "kernel/sound/soc/soc-core.ko",
+          }
+          selected = {n for n in all_modules if n.startswith(prefixes) or n in exact}
+          selected.update(required)
+
+          ordered, seen = [], set()
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              for dep in deps.get(name, []):
+                  visit(dep)
+              if name in all_modules:
+                  ordered.append(name)
+
+          for name in sorted(selected):
+              visit(name)
+
+          keep = set(ordered)
+          removed = sorted(all_modules - keep)
+          for name in removed:
+              (root / name).unlink()
+          print(f"RPi2/audio modules retained: {len(keep)} of {len(all_modules)}")
+          for name in ordered:
+              print("KEEP " + name)
+          print(f"Unrelated modules removed: {len(removed)}")
+          PYMOD
+
+          # Rebuild indexes after pruning. Remove source-tree symlinks which
+          # otherwise cause upload-artifact to archive the entire kernel tree.
+          depmod -b "$OUT/modules" "$KREL"
+          rm -f "$MODROOT/build" "$MODROOT/source"
+          MOD_COUNT="$(find "$MODROOT" -type f -name '*.ko' | wc -l)"
+          echo "Packaged RPi2/audio modules: $MOD_COUNT"
           test "$MOD_COUNT" -gt 0
 
-          # Build a valid ARMHF initramfs. It expects root=/dev/... in cmdline.txt,
-          # waits for the root block device, mounts it, then switches to /sbin/init.
+          # Build an initramfs that can actually locate the current root=PARTUUID.
+          # MMC block support is modular in the validated config, so include it
+          # and its complete dependency chain and load it before root discovery.
           INITRD="$RUNNER_TEMP/initramfs"
           mkdir -p "$INITRD"/{bin,dev,proc,sys,newroot}
           BUSYBOX="$BUSYBOX_ROOT/bin/busybox"
           [[ -x "$BUSYBOX" ]] || BUSYBOX="$BUSYBOX_ROOT/usr/bin/busybox"
           install -m 0755 "$BUSYBOX" "$INITRD/bin/busybox"
-          for applet in sh mount mkdir sleep cat switch_root; do
+          for applet in sh mount mkdir sleep cat switch_root insmod mknod; do
+            if ! "$BUSYBOX" --list | grep -qx "$applet"; then
+              echo "Required BusyBox applet unavailable: $applet" >&2
+              exit 1
+            fi
             ln -s busybox "$INITRD/bin/$applet"
           done
+
+          python3 - "$MODROOT" "$INITRD" "$KREL" <<'PYMMC'
+          import shutil, sys
+          from pathlib import Path
+
+          modroot, initrd, krel = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+          target = "kernel/drivers/mmc/card/mmc_block.ko"
+          deps = {}
+          for raw in (modroot / "modules.dep").read_text().splitlines():
+              if ":" in raw:
+                  name, values = raw.split(":", 1)
+                  deps[name.strip()] = values.split()
+
+          ordered, seen = [], set()
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              for dep in deps.get(name, []):
+                  visit(dep)
+              path = modroot / name
+              if not path.is_file():
+                  raise SystemExit("Missing MMC module dependency: " + name)
+              ordered.append(name)
+
+          visit(target)
+          destroot = initrd / "lib/modules" / krel
+          commands = ["#!/bin/sh", "set -e"]
+          for name in ordered:
+              dest = destroot / name
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(modroot / name, dest)
+              commands.append("/bin/insmod /lib/modules/" + krel + "/" + name)
+          (initrd / "load-mmc-modules.sh").write_text("\n".join(commands) + "\n")
+          print("Initramfs MMC module load order:")
+          for name in ordered:
+              print("  " + name)
+          PYMMC
+
           cat > "$INITRD/init" <<'INIT'
           #!/bin/sh
           export PATH=/bin
+          echo "initramfs: starting"
           mount -t devtmpfs devtmpfs /dev
           mount -t proc proc /proc
           mount -t sysfs sysfs /sys
+          [ -c /dev/console ] || mknod -m 600 /dev/console c 5 1
+          exec </dev/console >/dev/console 2>&1
+          echo "initramfs: kernel command line:"
+          cat /proc/cmdline
+
+          echo "initramfs: loading SD/MMC block modules"
+          if ! /bin/sh /load-mmc-modules.sh; then
+            echo "initramfs ERROR: MMC module loading failed"
+            exec sh
+          fi
+          echo "initramfs: MMC block support loaded"
+
+          ROOT_SPEC=""
           ROOT=""
           ROOTFSTYPE=""
           for arg in $(cat /proc/cmdline); do
             case "$arg" in
-              root=*) ROOT="${arg#root=}" ;;
+              root=*) ROOT_SPEC="${arg#root=}" ;;
               rootfstype=*) ROOTFSTYPE="${arg#rootfstype=}" ;;
             esac
           done
-          if [ -z "$ROOT" ]; then
-            echo "initramfs: missing root= in kernel command line"
+          if [ -z "$ROOT_SPEC" ]; then
+            echo "initramfs ERROR: missing root= parameter"
             exec sh
           fi
-          case "$ROOT" in
-            /dev/*) ;;
+
+          case "$ROOT_SPEC" in
+            /dev/*)
+              ROOT="$ROOT_SPEC"
+              ;;
+            PARTUUID=*)
+              WANT_PARTUUID="${ROOT_SPEC#PARTUUID=}"
+              echo "initramfs: resolving PARTUUID=$WANT_PARTUUID"
+              n=0
+              while [ -z "$ROOT" ] && [ "$n" -lt 30 ]; do
+                for event in /sys/class/block/*/uevent; do
+                  [ -r "$event" ] || continue
+                  DEVNAME=""
+                  PARTUUID=""
+                  while IFS='=' read -r key value; do
+                    case "$key" in
+                      DEVNAME) DEVNAME="$value" ;;
+                      PARTUUID) PARTUUID="$value" ;;
+                    esac
+                  done < "$event"
+                  if [ "$PARTUUID" = "$WANT_PARTUUID" ] && [ -n "$DEVNAME" ]; then
+                    ROOT="/dev/$DEVNAME"
+                    break
+                  fi
+                done
+                [ -n "$ROOT" ] || sleep 1
+                n=$((n + 1))
+              done
+              ;;
             *)
-              echo "initramfs: root must be a /dev/... path, got: $ROOT"
+              echo "initramfs ERROR: unsupported root= format: $ROOT_SPEC"
               exec sh
               ;;
           esac
+
+          if [ -z "$ROOT" ]; then
+            echo "initramfs ERROR: could not resolve root=$ROOT_SPEC"
+            echo "initramfs: block devices:"
+            for event in /sys/class/block/*/uevent; do
+              [ -r "$event" ] && cat "$event"
+            done
+            exec sh
+          fi
+          echo "initramfs: root device resolved to $ROOT"
+
           n=0
           while [ ! -b "$ROOT" ] && [ "$n" -lt 30 ]; do
             sleep 1
             n=$((n + 1))
           done
           if [ ! -b "$ROOT" ]; then
-            echo "initramfs: root device not found: $ROOT"
+            echo "initramfs ERROR: block device not present: $ROOT"
             exec sh
           fi
+
           if [ -n "$ROOTFSTYPE" ]; then
             mount -t "$ROOTFSTYPE" -o rw "$ROOT" /newroot
           else
             mount -o rw "$ROOT" /newroot
           fi
           if [ $? -ne 0 ] || [ ! -x /newroot/sbin/init ]; then
-            echo "initramfs: cannot mount root or /sbin/init is missing"
+            echo "initramfs ERROR: root mount failed or /sbin/init missing"
             exec sh
           fi
+
+          echo "initramfs: root filesystem mounted"
           mkdir -p /newroot/dev /newroot/proc /newroot/sys
           mount -o move /dev /newroot/dev
           mount -o move /proc /newroot/proc
           mount -o move /sys /newroot/sys
+          echo "initramfs: switching to /sbin/init"
           exec switch_root /newroot /sbin/init
           INIT
           chmod 0755 "$INITRD/init"
@@ -246,6 +413,7 @@ jobs:
           ) > "$OUT/boot/initramfs7"
           test -s "$OUT/boot/kernel7.img"
           test -s "$OUT/boot/initramfs7"
+
           cat > "$OUT/boot/rpi2-config-example.txt" <<'BOOTCFG'
           # Merge these lines into the existing Raspberry Pi boot config.txt
           kernel=kernel7.img
@@ -254,19 +422,19 @@ jobs:
           arm_64bit=0
           BOOTCFG
           cat > "$OUT/boot/cmdline-example.txt" <<'CMDLINE'
-          # Add the correct root partition for the Eunhasu SD-card image.
-          # Example only; replace /dev/mmcblk0p2 if the root filesystem differs.
-          console=serial0,115200 console=tty1 root=/dev/mmcblk0p2 rootwait rw
+          # Keep the root PARTUUID from the existing Eunhasu SD-card image.
+          console=serial0,115200 console=tty1 root=PARTUUID=REPLACE_WITH_REAL_PARTUUID rootwait rw
           CMDLINE
-          test -s "$OUT/boot/bcm2709-rpi-2-b.dtb"
-          test -s "$OUT/boot/bcm2836-rpi-2-b.dtb"
-          test -s "$OUT/modules/lib/modules/$KREL/modules.dep"
-          echo "Final boot and module payload:"
-          find "$OUT/boot" -maxdepth 2 -type f -printf '%P %s bytes\\n' | sort
-          echo "Module files: $MOD_COUNT"
-          du -sh "$OUT"
 
-      - name: Audit all original Diretta undefined symbols
+          echo "Final RPi2 boot payload:"
+          find "$OUT/boot" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          echo "DTB count: $(find "$OUT/boot" -maxdepth 1 -type f -name '*.dtb' | wc -l)"
+          echo "Packaged module count: $MOD_COUNT"
+          du -sh "$OUT"
+          test "$(find "$OUT/boot" -maxdepth 1 -type f -name '*.dtb' | wc -l)" -eq 2
+          test -s "$OUT/modules/lib/modules/$KREL/modules.dep"
+          test -s "$OUT/boot/initramfs7"
+                - name: Audit all original Diretta undefined symbols
         shell: bash
         run: |
           set -Eeuo pipefail
