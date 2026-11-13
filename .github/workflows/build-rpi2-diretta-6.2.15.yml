@@ -131,6 +131,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          trap 'rc=$?; echo "::error::BUILD_STEP_FAILED line=${LINENO} exit=${rc} command=${BASH_COMMAND}"; exit "$rc"' ERR
+          echo "BUILD_STEP_DIAGNOSTICS=enabled"
           cd "$SRC"
           export ARCH CROSS_COMPILE
           export KCFLAGS=""
@@ -427,13 +429,16 @@ jobs:
           exec switch_root /newroot /sbin/init
           INIT
           chmod 0755 "$INITRD/init"
+          echo "INITRAMFS_INIT_SCRIPT_CREATED"
           (
             cd "$INITRD"
             find . -print0 | cpio --null -o --format=newc 2>/dev/null | gzip -9
           ) > "$OUT/boot/initramfs7"
+          echo "INITRAMFS_ARCHIVE_CREATED"
           test -s "$OUT/boot/kernel7.img"
           test -s "$OUT/boot/initramfs7"
           gzip -t "$OUT/boot/initramfs7"
+          echo "INITRAMFS_GZIP_VALIDATED"
           INITRD_LIST="$RUNNER_TEMP/initramfs-list.txt"
           gzip -dc "$OUT/boot/initramfs7" | cpio -it 2>/dev/null | sort > "$INITRD_LIST"
           grep -Fxq "./init" "$INITRD_LIST"
